@@ -1,0 +1,17 @@
+[package]
+name = "real-time-chess"
+version = "0.1.0"
+edition = "2024"
+
+
+
+[dependencies]
+anyhow = "1.0.94"
+bevy = "0.15"
+bevy_egui = { version = "0.31.1", features = ["serde"] }
+bevy_renet = { git = "https://github.com/lucaspoffo/renet", version = "0.0.12" }
+bincode = "1.3.3"
+renet_visualizer = { git = "https://github.com/lucaspoffo/renet", version = "0.0.9", features = ["bevy"] }
+serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.133"
+uuid = { version = "1.11.0", features = ["serde", "v7"] }

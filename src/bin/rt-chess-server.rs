@@ -64,9 +64,6 @@ pub struct Room {
     board: Board,
 }
 
-// #[derive(Debug, Default, Clone, Component)]
-// pub struct RoomMarker(RoomID);
-
 impl Room {
     pub fn make_move_for(
         &mut self,
@@ -257,7 +254,7 @@ impl Room {
     ) -> Result<()> {
         ensure!(
             vec![0.0, 90., 180., 270.].contains(&angle),
-            "the bishop can only move vertically or horizontally."
+            "the rook can only move vertically or horizontally."
         );
 
         Ok(())
@@ -270,6 +267,44 @@ impl Room {
         from: &Location,
         to: &Location,
     ) -> Result<()> {
+        // TODO: include en pesant
+        if (2 == from.0 as usize
+            && self.board[from].is_some_and(
+                |(_piece, moving_peice_color, _last_moved, _cooldown)| {
+                    moving_peice_color == PlayerColor::White
+                },
+            )
+            && angle == 90.
+            && magnitude == 2.)
+            || (7 == from.0 as usize
+                && self.board[from].is_some_and(
+                    |(_piece, moving_peice_color, _last_moved, _cooldown)| {
+                        moving_peice_color == PlayerColor::Black
+                    },
+                )
+                && angle == 270.
+                && magnitude == 2.)
+        {
+            return Ok(());
+        }
+
+        ensure!(
+            angle == 45.0 || angle == 135.0 || angle == 90.0,
+            "pawns can only go forward."
+        );
+
+        if angle == 45. || angle == 135. {
+            ensure!(
+                self.board[to].is_some() && ((magnitude * 100.).round() / 100.) == 1.41,
+                "pawns can only move diaganoly when capturing a piece."
+            );
+        } else if angle == 90. {
+            ensure!(
+                self.board[to].is_none() && magnitude == 1.,
+                "pawns cannot capture forwards."
+            );
+        }
+
         Ok(())
     }
 
@@ -279,14 +314,6 @@ impl Room {
             rise: (y1 - y2),
             run: (x1 - x2),
         };
-
-        // if (x1 - x2) != 0. {
-        //     (y1 - y2) / (x1 - x2) * 180. / PI
-        // } else if (x1 - x2) < 0. {
-        //     PI
-        // } else {
-        //     2. * PI
-        // };
 
         (magnitude, angle)
     }
@@ -370,6 +397,7 @@ fn main() {
         (
             server_update_system,
             // check_for_victories,
+            // promote,
             //         server_network_sync,
             //         move_players_system,
             //         update_projectiles_system,

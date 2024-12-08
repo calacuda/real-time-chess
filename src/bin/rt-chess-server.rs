@@ -10,8 +10,8 @@ use bevy_renet::{
     renet::{ClientId, RenetServer, ServerEvent},
 };
 use real_time_chess::{
-    ChessPiece, ClientChannel, ClientMessage, Location, Player, PlayerColor, RoomID, ServerChannel,
-    ServerMessage, Slope,
+    ChessPiece, ClientChannel, ClientMessage, Location, PROTOCOL_ID, Player, PlayerColor, RoomID,
+    ServerChannel, ServerMessage, Slope, connection_config,
 };
 use renet_visualizer::RenetServerVisualizer;
 use std::{
@@ -379,6 +379,35 @@ pub struct ServerLobby {
     pub room_mem: HashMap<ClientId, RoomID>,
 }
 
+fn add_network(app: &mut App) {
+    use bevy_renet::netcode::{
+        NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerConfig,
+    };
+    // use demo_bevy:PROTOCOL_ID, connection_config};
+    use std::{net::UdpSocket, time::SystemTime};
+
+    app.add_plugins(NetcodeServerPlugin);
+
+    let server = RenetServer::new(connection_config());
+
+    let public_addr = "127.0.0.1:5000".parse().unwrap();
+    let socket = UdpSocket::bind(public_addr).unwrap();
+    let current_time: std::time::Duration = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    let server_config = ServerConfig {
+        current_time,
+        max_clients: 64,
+        protocol_id: PROTOCOL_ID,
+        public_addresses: vec![public_addr],
+        authentication: ServerAuthentication::Unsecure,
+    };
+
+    let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
+    app.insert_resource(server);
+    app.insert_resource(transport);
+}
+
 fn main() {
     let mut app = App::new();
     app.add_plugins(DefaultPlugins);
@@ -392,20 +421,9 @@ fn main() {
 
     app.insert_resource(RenetServerVisualizer::<200>::default());
 
-    app.add_systems(
-        Update,
-        (
-            server_update_system,
-            // check_for_victories,
-            // promote,
-            //         server_network_sync,
-            //         move_players_system,
-            //         update_projectiles_system,
-            //         update_visulizer_system,
-            //         spawn_bot,
-            //         bot_autocast,
-        ),
-    );
+    add_network(&mut app);
+
+    app.add_systems(Update, server_update_system);
 
     // app.add_systems(FixedUpdate, apply_velocity_system);
     // app.add_systems(PostUpdate, projectile_on_removal_system);
@@ -417,13 +435,10 @@ fn main() {
 fn server_update_system(
     mut server_events: EventReader<ServerEvent>,
     mut commands: Commands,
-    // mut meshes: ResMut<Assets<Mesh>>,
-    // mut materials: ResMut<Assets<StandardMaterial>>,
     mut lobby: ResMut<ServerLobby>,
     mut rooms: Query<&mut Room>,
     mut server: ResMut<RenetServer>,
     mut visualizer: ResMut<RenetServerVisualizer<200>>,
-    // players: Query<(Entity, &Player, &Transform)>,
 ) {
     for event in server_events.read() {
         match event {
@@ -459,7 +474,7 @@ fn server_update_system(
                         let message = bincode::serialize(&message).unwrap();
                         server.broadcast_message(ServerChannel::ServerMessages, message);
                     }
-                    ClientMessage::ChatMessage(mesg) => {}
+                    // ClientMessage::ChatMessage(_mesg) => {}
                     ClientMessage::StartRoom(room_key) => {
                         if lobby.players.get(&client_id).is_some()
                             && !lobby.room_mem.contains_key(&client_id)
@@ -484,7 +499,7 @@ fn server_update_system(
                             } else if lobby.room_mem.contains_key(&client_id) {
                                 ServerMessage::Error("you're already in a room".into())
                             } else {
-                                ServerMessage::Error("can't join that room. right now".into())
+                                ServerMessage::Error("can't join that room right now.".into())
                             });
                             if let Ok(message) = message {
                                 server.broadcast_message(ServerChannel::ServerMessages, message);
@@ -509,6 +524,9 @@ fn server_update_system(
                                             ServerChannel::ServerMessages,
                                             message,
                                         );
+
+                                        // TODO: check for victory.
+                                        // TODO: check for promotion.
                                     }
                                 });
                             } else {
@@ -529,11 +547,5 @@ fn server_update_system(
                 }
             }
         }
-        // while let Some(message) = server.receive_message(client_id, ClientChannel::Input) {
-        //     let input: PlayerInput = bincode::deserialize(&message).unwrap();
-        //     if let Some(player_entity) = lobby.players.get(&client_id) {
-        //         commands.entity(*player_entity).insert(input);
-        //     }
-        // }
     }
 }

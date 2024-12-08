@@ -1,7 +1,9 @@
 use bevy::prelude::*;
-use bevy_renet::renet::{ChannelConfig, ClientId, SendType};
+use bevy_renet::renet::{ChannelConfig, ClientId, ConnectionConfig, SendType};
 use serde::{Deserialize, Serialize};
 use std::{f32::consts::PI, time::Duration};
+
+pub const PROTOCOL_ID: u64 = 7;
 
 pub type Location = (Rank, File);
 pub type RoomID = [char; 4];
@@ -97,7 +99,7 @@ pub enum ChessPiece {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMessage {
-    ChatMessage(String),
+    // ChatMessage(String),
     Move {
         from: (Rank, File),
         to: (Rank, File),
@@ -107,7 +109,7 @@ pub enum ClientMessage {
     ListRooms,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Resource)]
 pub enum PlayerColor {
     Black,
     White,
@@ -135,12 +137,14 @@ pub enum ServerMessage {
     /// the peice can't move like that caries the message which describes how/why that move
     /// was invalid.  
     InvalidMove(String),
-    /// Chat message.
-    ChatMessage(String),
+    // /// Chat message.
+    // ChatMessage(String),
     /// a player captured the king
     Victory(PlayerColor),
-    /// updates on the cooldown of peices
-    CooldownUpdate(Vec<Cooldown>),
+    Draw,
+    OpponentDisconect,
+    // /// updates on the cooldown of peices
+    // CooldownUpdate(Vec<Cooldown>),
     ///
     ListRooms(Vec<RoomID>),
     Error(String),
@@ -210,5 +214,13 @@ impl ServerChannel {
                 },
             },
         ]
+    }
+}
+
+pub fn connection_config() -> ConnectionConfig {
+    ConnectionConfig {
+        available_bytes_per_tick: 1024 * 1024,
+        client_channels_config: ClientChannel::channels_config(),
+        server_channels_config: ServerChannel::channels_config(),
     }
 }

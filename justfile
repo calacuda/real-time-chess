@@ -7,7 +7,7 @@ new-window NAME CMD:
 
 tmux:
   tmux new -ds rt-chess -n "README"
-  tmux send-keys -t rt-chess README 'nv ./README.md "+set wrap"' ENTER
+  tmux send-keys -t rt-chess:README 'nv ./README.md "+set wrap"' ENTER
   # @just new-window "GUI" "nv ./gui/MIDI-Tracker.pygame +'setfiletype python'"
   @just new-window "Edit" ""
   @just new-window "Run" ""

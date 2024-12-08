@@ -54,6 +54,9 @@ pub enum GameOver {
 }
 
 #[derive(Debug, Clone, Event)]
+pub struct ErrorNotif(pub String);
+
+#[derive(Debug, Clone, Event)]
 pub struct MiscError(pub String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Component)]
@@ -134,6 +137,7 @@ fn client_recv_messages(
     mut player_move_event: EventWriter<PlayerMoveNotif>,
     mut opponent_move_event: EventWriter<OpponentMoveNotif>,
     mut game_over_event: EventWriter<GameOver>,
+    mut error_event: EventWriter<ErrorNotif>,
 ) {
     // let client_id = client_id.0;
     while let Some(message) = client.receive_message(ServerChannel::ServerMessages) {
@@ -196,7 +200,7 @@ fn client_recv_messages(
                 }
             }
             ServerMessage::Error(message) => {
-                // TODO: send error event
+                error_event.send(ErrorNotif(message));
             }
             ServerMessage::Draw => {
                 game_over_event.send(GameOver::Draw);
@@ -240,6 +244,7 @@ fn main() {
     app.add_event::<PlayerMoveNotif>();
     app.add_event::<OpponentMoveNotif>();
     app.add_event::<GameOver>();
+    app.add_event::<ErrorNotif>();
 
     // app.insert_resource(ClientLobby::default());
     // app.insert_resource(NetworkMapping::default());

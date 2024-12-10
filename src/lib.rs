@@ -7,6 +7,11 @@ pub const PROTOCOL_ID: u64 = 7;
 
 pub type Location = (Rank, File);
 pub type RoomID = [char; 4];
+pub type UserName = String;
+
+pub fn display_room_id(id: &RoomID) -> String {
+    format!("{}-{}-{}-{}", id[0], id[1], id[2], id[3])
+}
 
 #[derive(Debug, Clone, Copy, Component, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub struct Slope {
@@ -98,12 +103,14 @@ pub enum ChessPiece {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ClientMessage {
-    // ChatMessage(String),
+pub enum ClientInGameMessage {
     Move {
         from: (Rank, File),
         to: (Rank, File),
     },
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClientSystemMessage {
     StartRoom(RoomID),
     JoinRoom(RoomID),
     ListRooms,
@@ -122,10 +129,17 @@ pub struct Cooldown {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ServerMessage {
-    /// tells the client that the server is looking for another player to match them against holds
-    /// the duration before a "NoOponentFoundError"
-    LoadingMatch(Duration),
+pub enum ServerInRoomMessage {
+    /// tells the client that the server is waiting for another player to join the game.
+    WaitingForPlayers,
+    /// player requested to join
+    RoomJoinRequest(UserName),
+    /// player successfully joined the room
+    PlayerJoined(UserName),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ServerInGameMessage {
     /// the move was recieved and made successfully.
     MoveRecv {
         player: PlayerColor,
@@ -137,33 +151,39 @@ pub enum ServerMessage {
     /// the peice can't move like that caries the message which describes how/why that move
     /// was invalid.  
     InvalidMove(String),
-    // /// Chat message.
-    // ChatMessage(String),
     /// a player captured the king
     Victory(PlayerColor),
     Draw,
     OpponentDisconect,
-    // /// updates on the cooldown of peices
-    // CooldownUpdate(Vec<Cooldown>),
-    ///
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ServerSystemMessage {
+    /// a list of the rooms available to join.
     ListRooms(Vec<RoomID>),
+    /// Misc error.
     Error(String),
+    /// notifies a client that they joined a room.
+    JoinedRoom(RoomID),
+    /// notifies a client that they left a room.
+    LeftRoom(RoomID),
 }
 
 pub enum ClientChannel {
-    // Input,
-    Command,
+    Game,
+    System,
 }
 pub enum ServerChannel {
-    ServerMessages,
-    // NetworkedEntities,
+    InGame,
+    InRoom,
+    System,
 }
 
 impl From<ClientChannel> for u8 {
     fn from(channel_id: ClientChannel) -> Self {
         match channel_id {
-            ClientChannel::Command => 0,
-            // ClientChannel::Input => 1,
+            ClientChannel::System => 0,
+            ClientChannel::Game => 1,
         }
     }
 }
@@ -171,15 +191,15 @@ impl From<ClientChannel> for u8 {
 impl ClientChannel {
     pub fn channels_config() -> Vec<ChannelConfig> {
         vec![
-            // ChannelConfig {
-            //     channel_id: Self::Input.into(),
-            //     max_memory_usage_bytes: 5 * 1024 * 1024,
-            //     send_type: SendType::ReliableOrdered {
-            //         resend_time: Duration::ZERO,
-            //     },
-            // },
             ChannelConfig {
-                channel_id: Self::Command.into(),
+                channel_id: Self::System.into(),
+                max_memory_usage_bytes: 5 * 1024 * 1024,
+                send_type: SendType::ReliableOrdered {
+                    resend_time: Duration::ZERO,
+                },
+            },
+            ChannelConfig {
+                channel_id: Self::Game.into(),
                 max_memory_usage_bytes: 5 * 1024 * 1024,
                 send_type: SendType::ReliableOrdered {
                     resend_time: Duration::ZERO,
@@ -192,8 +212,9 @@ impl ClientChannel {
 impl From<ServerChannel> for u8 {
     fn from(channel_id: ServerChannel) -> Self {
         match channel_id {
-            // ServerChannel::NetworkedEntities => 0,
-            ServerChannel::ServerMessages => 0,
+            ServerChannel::System => 0,
+            ServerChannel::InGame => 1,
+            ServerChannel::InRoom => 2,
         }
     }
 }
@@ -201,17 +222,22 @@ impl From<ServerChannel> for u8 {
 impl ServerChannel {
     pub fn channels_config() -> Vec<ChannelConfig> {
         vec![
-            // ChannelConfig {
-            //     channel_id: Self::NetworkedEntities.into(),
-            //     max_memory_usage_bytes: 10 * 1024 * 1024,
-            //     send_type: SendType::Unreliable,
-            // },
             ChannelConfig {
-                channel_id: Self::ServerMessages.into(),
+                channel_id: Self::System.into(),
+                max_memory_usage_bytes: 10 * 1024 * 1024,
+                send_type: SendType::Unreliable,
+            },
+            ChannelConfig {
+                channel_id: Self::InGame.into(),
                 max_memory_usage_bytes: 10 * 1024 * 1024,
                 send_type: SendType::ReliableOrdered {
                     resend_time: Duration::from_millis(200),
                 },
+            },
+            ChannelConfig {
+                channel_id: Self::InRoom.into(),
+                max_memory_usage_bytes: 10 * 1024 * 1024,
+                send_type: SendType::Unreliable,
             },
         ]
     }

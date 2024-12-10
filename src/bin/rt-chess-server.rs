@@ -10,8 +10,9 @@ use bevy_renet::{
     renet::{ClientId, RenetServer, ServerEvent},
 };
 use real_time_chess::{
-    ChessPiece, ClientChannel, ClientMessage, Location, PROTOCOL_ID, Player, PlayerColor, RoomID,
-    ServerChannel, ServerMessage, Slope, connection_config,
+    ChessPiece, ClientChannel, ClientInGameMessage, ClientSystemMessage, File, Location,
+    PROTOCOL_ID, Player, PlayerColor, Rank, RoomID, ServerChannel, ServerInGameMessage,
+    ServerSystemMessage, Slope, connection_config,
 };
 use renet_visualizer::RenetServerVisualizer;
 use std::{
@@ -23,9 +24,66 @@ use std::{
 pub type BoardPiece = (ChessPiece, PlayerColor, Instant, Duration);
 pub type BoardSquare = Option<BoardPiece>;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Board {
     squares: [[BoardSquare; 8]; 8],
+}
+
+impl Default for Board {
+    fn default() -> Self {
+        let mut room = Board {
+            squares: [[None; 8]; 8],
+        };
+        let white_pieces: Vec<(Location, ChessPiece)> = vec![
+            ((Rank::A, File::One), ChessPiece::R),
+            ((Rank::B, File::One), ChessPiece::N),
+            ((Rank::C, File::One), ChessPiece::B),
+            ((Rank::D, File::One), ChessPiece::Q),
+            ((Rank::E, File::One), ChessPiece::K),
+            ((Rank::F, File::One), ChessPiece::B),
+            ((Rank::G, File::One), ChessPiece::N),
+            ((Rank::H, File::One), ChessPiece::R),
+            ((Rank::A, File::Two), ChessPiece::Pawn),
+            ((Rank::B, File::Two), ChessPiece::Pawn),
+            ((Rank::C, File::Two), ChessPiece::Pawn),
+            ((Rank::D, File::Two), ChessPiece::Pawn),
+            ((Rank::E, File::Two), ChessPiece::Pawn),
+            ((Rank::F, File::Two), ChessPiece::Pawn),
+            ((Rank::G, File::Two), ChessPiece::Pawn),
+            ((Rank::H, File::Two), ChessPiece::Pawn),
+        ];
+        let black_pieces: Vec<(Location, ChessPiece)> = vec![
+            ((Rank::A, File::Eight), ChessPiece::R),
+            ((Rank::B, File::Eight), ChessPiece::N),
+            ((Rank::C, File::Eight), ChessPiece::B),
+            ((Rank::D, File::Eight), ChessPiece::Q),
+            ((Rank::E, File::Eight), ChessPiece::K),
+            ((Rank::F, File::Eight), ChessPiece::B),
+            ((Rank::G, File::Eight), ChessPiece::N),
+            ((Rank::H, File::Eight), ChessPiece::R),
+            ((Rank::A, File::Seven), ChessPiece::Pawn),
+            ((Rank::B, File::Seven), ChessPiece::Pawn),
+            ((Rank::C, File::Seven), ChessPiece::Pawn),
+            ((Rank::D, File::Seven), ChessPiece::Pawn),
+            ((Rank::E, File::Seven), ChessPiece::Pawn),
+            ((Rank::F, File::Seven), ChessPiece::Pawn),
+            ((Rank::G, File::Seven), ChessPiece::Pawn),
+            ((Rank::H, File::Seven), ChessPiece::Pawn),
+        ];
+
+        let inst = Instant::now();
+        let dur = Duration::from_secs_f32(0.0);
+
+        for (loc, piece) in white_pieces {
+            room[&loc] = Some((piece, PlayerColor::White, inst, dur));
+        }
+
+        for (loc, piece) in black_pieces {
+            room[&loc] = Some((piece, PlayerColor::Black, inst, dur));
+        }
+
+        room
+    }
 }
 
 impl Board {
@@ -70,34 +128,34 @@ impl Room {
         player: &mut Player,
         from: Location,
         to: Location,
-    ) -> ServerMessage {
+    ) -> ServerInGameMessage {
         let Some((piece, moving_peice_color, last_moved, cooldown)) = self.board[&from].clone()
         else {
             error!("{}, tried to move a nonexisting peice.", player.id);
-            return ServerMessage::InvalidMove(format!(
+            return ServerInGameMessage::InvalidMove(format!(
                 "there is no peice to move at possision {from:?}"
             ));
         };
 
         if !self.moving_own_peice(player.color, moving_peice_color) {
-            return ServerMessage::InvalidMove(format!("you can only move your own peices."));
+            return ServerInGameMessage::InvalidMove(format!("you can only move your own peices."));
         }
 
         if self.self_capture(player.color, &to) {
-            return ServerMessage::InvalidMove(format!(
+            return ServerInGameMessage::InvalidMove(format!(
                 "you can't move a peice to a square ocupied by one of your own peice."
             ));
         }
 
         // calculate a vector of movement for the peice and see if its valid.
         if let Err(e) = self.validated_move_vec(piece, &from, &to) {
-            return ServerMessage::InvalidMove(format!("{e}"));
+            return ServerInGameMessage::InvalidMove(format!("{e}"));
         }
 
         if self.durring_cooldown(last_moved, cooldown) {
             player.cooldown += cooldown / 3;
 
-            return ServerMessage::InvalidMove(format!(
+            return ServerInGameMessage::InvalidMove(format!(
                 "peice at possision {from:?} is on cooldown."
             ));
         } else if self.penalty_move(last_moved, cooldown) {
@@ -110,7 +168,7 @@ impl Room {
         // move peice
         self.make_move(&from, &to, player.cooldown);
 
-        ServerMessage::MoveRecv {
+        ServerInGameMessage::MoveRecv {
             player: player.color,
             from,
             to,
@@ -463,31 +521,56 @@ fn server_update_system(
     }
 
     for client_id in server.clients_id() {
-        while let Some(message) = server.receive_message(client_id, ClientChannel::Command) {
-            if let Ok(command) = bincode::deserialize::<ClientMessage>(&message) {
+        while let Some(message) = server.receive_message(client_id, ClientChannel::System) {
+            if let Ok(command) = bincode::deserialize::<ClientSystemMessage>(&message) {
                 match command {
-                    ClientMessage::ListRooms => {
-                        let message = ServerMessage::ListRooms(
+                    ClientSystemMessage::ListRooms => {
+                        let message = ServerSystemMessage::ListRooms(
                             // lobby.rooms.clone().keys().map(|key| *key).collect(),
                             rooms.iter().map(|room| room.id.clone()).collect(),
                         );
                         let message = bincode::serialize(&message).unwrap();
-                        server.broadcast_message(ServerChannel::ServerMessages, message);
+                        server.send_message(client_id, ServerChannel::System, message);
                     }
                     // ClientMessage::ChatMessage(_mesg) => {}
-                    ClientMessage::StartRoom(room_key) => {
+                    ClientSystemMessage::StartRoom(room_key) => {
                         if lobby.players.get(&client_id).is_some()
                             && !lobby.room_mem.contains_key(&client_id)
                         {
                             // lobby.rooms.insert(room_key, Room::default());
-                            commands.spawn(Room {
-                                id: room_key,
-                                board: Board::default(),
-                            });
-                            lobby.room_mem.insert(client_id, room_key);
+                            if rooms.iter().position(|room| room.id == room_key).is_none() {
+                                commands.spawn(Room {
+                                    id: room_key,
+                                    board: Board::default(),
+                                });
+                                lobby.room_mem.insert(client_id, room_key);
+                                let msg = ServerSystemMessage::JoinedRoom(room_key);
+                                server.send_message(
+                                    client_id,
+                                    ServerChannel::System,
+                                    bincode::serialize(&msg).unwrap(),
+                                );
+                            } else {
+                                let msg = ServerSystemMessage::Error(
+                                    "that room key already exists. try a different one.".into(),
+                                );
+                                server.send_message(
+                                    client_id,
+                                    ServerChannel::System,
+                                    bincode::serialize(&msg).unwrap(),
+                                );
+                            }
+                        } else {
+                            let msg = ServerSystemMessage::Error("you are already in a room. please leave the room before trying to start a new one.".into());
+                            server.send_message(
+                                client_id,
+                                ServerChannel::System,
+                                bincode::serialize(&msg).unwrap(),
+                            );
                         }
                     }
-                    ClientMessage::JoinRoom(room_key) => {
+                    ClientSystemMessage::JoinRoom(room_key) => {
+                        // TODO: add room join requesting and the like.
                         let room_exists =
                             rooms.iter().position(|room| room.id == room_key).is_some();
                         if room_exists && !lobby.room_mem.contains_key(&client_id) {
@@ -495,20 +578,27 @@ fn server_update_system(
                             lobby.room_mem.insert(client_id, room_key);
                         } else {
                             let message = bincode::serialize(&if !room_exists {
-                                ServerMessage::Error("that room doen't exist".into())
+                                ServerSystemMessage::Error("that room doen't exist".into())
                             } else if lobby.room_mem.contains_key(&client_id) {
-                                ServerMessage::Error("you're already in a room".into())
+                                ServerSystemMessage::Error("you're already in a room".into())
                             } else {
-                                ServerMessage::Error("can't join that room right now.".into())
+                                ServerSystemMessage::Error("can't join that room right now.".into())
                             });
                             if let Ok(message) = message {
-                                server.broadcast_message(ServerChannel::ServerMessages, message);
+                                server.send_message(client_id, ServerChannel::System, message);
                             } else {
                                 error!("could not serialize JoinRoomFailure message.");
                             }
                         }
                     }
-                    ClientMessage::Move { from, to } => {
+                }
+            }
+        }
+
+        while let Some(message) = server.receive_message(client_id, ClientChannel::Game) {
+            if let Ok(command) = bincode::deserialize::<ClientInGameMessage>(&message) {
+                match command {
+                    ClientInGameMessage::Move { from, to } => {
                         let room_mem = lobby.room_mem.clone();
                         let room = room_mem.get(&client_id);
 
@@ -520,8 +610,9 @@ fn server_update_system(
                                             &room.make_move_for(player, from, to),
                                         )
                                         .unwrap();
-                                        server.broadcast_message(
-                                            ServerChannel::ServerMessages,
+                                        server.send_message(
+                                            client_id,
+                                            ServerChannel::InGame,
                                             message,
                                         );
 
@@ -530,18 +621,18 @@ fn server_update_system(
                                     }
                                 });
                             } else {
-                                let message = bincode::serialize(&ServerMessage::Error(
+                                let message = bincode::serialize(&ServerSystemMessage::Error(
                                     "that room has closed. the game ended.".into(),
                                 ))
                                 .unwrap();
-                                server.broadcast_message(ServerChannel::ServerMessages, message);
+                                server.send_message(client_id, ServerChannel::System, message);
                             }
                         } else {
-                            let message = bincode::serialize(&ServerMessage::Error(
+                            let message = bincode::serialize(&ServerSystemMessage::Error(
                                 "you're not in a room. join/start on first".into(),
                             ))
                             .unwrap();
-                            server.broadcast_message(ServerChannel::ServerMessages, message);
+                            server.send_message(client_id, ServerChannel::System, message);
                         }
                     }
                 }

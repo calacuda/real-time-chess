@@ -163,7 +163,7 @@ impl Room {
         }
 
         // check for capture.
-        let capture = self.capture(player.color, &from);
+        let capture = self.capture(player.color, &to);
 
         // move peice
         self.make_move(&from, &to, player.cooldown);
@@ -426,8 +426,8 @@ impl Room {
         moving_peice_color == player_color
     }
 
-    pub fn capture(&mut self, player_color: PlayerColor, from: &Location) -> bool {
-        self.board[&from]
+    pub fn capture(&mut self, player_color: PlayerColor, to: &Location) -> bool {
+        self.board[&to]
             .clone()
             .is_some_and(|(_, color, _, _)| color != player_color)
     }

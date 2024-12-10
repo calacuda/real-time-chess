@@ -87,7 +87,7 @@ impl Default for Board {
 }
 
 impl Board {
-    pub fn get_cords(&self) -> Vec<((usize, usize), BoardPiece)> {
+    pub fn get_coords(&self) -> Vec<((usize, usize), BoardPiece)> {
         let all_squares = self.squares.iter().enumerate().map(move |(rank, files)| {
             files
                 .iter()
@@ -148,7 +148,7 @@ impl Room {
         }
 
         // calculate a vector of movement for the peice and see if its valid.
-        if let Err(e) = self.validated_move_vec(piece, &from, &to) {
+        if let Err(e) = self.validated_move_vec(piece, &from, &to, moving_peice_color) {
             return ServerInGameMessage::InvalidMove(format!("{e}"));
         }
 
@@ -182,12 +182,13 @@ impl Room {
         piece: ChessPiece,
         from: &Location,
         to: &Location,
+        moving_peice_color: PlayerColor,
     ) -> Result<()> {
         let move_vector = self.calc_move_vec(&from, &to);
         let (magnitude, slope) = move_vector;
 
         if piece != ChessPiece::N {
-            self.piece_in_way(magnitude, slope, from)?;
+            self.piece_in_way(magnitude, slope, from, moving_peice_color)?;
         }
 
         let angle = slope.to_degrees();
@@ -210,31 +211,35 @@ impl Room {
         angle: Slope,
         from: &Location,
         // to: &Location,
+        moving_peice_color: PlayerColor,
     ) -> Result<()> {
         // let mut piece_vecs = HashMap::with_capacity(16);
         let make_key = |angle: Slope| format!("({:.2}/{:.2})", angle.rise, angle.run);
 
-        let piece_vecs: HashMap<String, f32> = self
+        let piece_vecs: HashMap<String, (f32, PlayerColor)> = self
             .board
-            .get_cords()
+            .get_coords()
             .into_iter()
-            .map(|((rank, file), _)| {
+            .map(|((rank, file), (_, color, _, _))| {
                 let (mag, angle) = self.do_calc_move_vec(
                     (from.0 as usize) as f32,
                     rank as f32,
                     (from.1 as usize) as f32,
                     file as f32,
                 );
-                (make_key(angle), mag)
+                (make_key(angle), (mag, color))
             })
             .collect();
 
-        if let Some(mag) = piece_vecs.get(&make_key(angle)) {
-            ensure!(
-                *mag >= magnitude,
-                "there was a piece in the way of that movement"
-            )
-        }
+        let same_vec = piece_vecs.get(&make_key(angle));
+
+        ensure!(
+            same_vec.is_some_and(|(mag, color)| {
+                (moving_peice_color == *color && *mag < magnitude)
+                    || (moving_peice_color != *color && *mag <= magnitude)
+            }) || same_vec.is_none(),
+            "there was a piece in the way of that movement"
+        );
 
         Ok(())
     }

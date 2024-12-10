@@ -199,7 +199,9 @@ impl Room {
             ChessPiece::Q => self.validate_queen_move(angle),
             ChessPiece::B => self.validate_bishop_move(angle),
             ChessPiece::R => self.validate_rook_move(angle),
-            ChessPiece::Pawn => self.validate_pawn_move(magnitude, angle, from, to),
+            ChessPiece::Pawn => {
+                self.validate_pawn_move(magnitude, angle, from, to, moving_peice_color)
+            }
         }?;
 
         Ok(())
@@ -213,7 +215,6 @@ impl Room {
         // to: &Location,
         moving_peice_color: PlayerColor,
     ) -> Result<()> {
-        // let mut piece_vecs = HashMap::with_capacity(16);
         let make_key = |angle: Slope| format!("({:.2}/{:.2})", angle.rise, angle.run);
 
         let piece_vecs: HashMap<String, (f32, PlayerColor)> = self
@@ -329,6 +330,7 @@ impl Room {
         angle: f32,
         from: &Location,
         to: &Location,
+        moving_peice_color: PlayerColor,
     ) -> Result<()> {
         // TODO: include en pesant
         if (2 == from.0 as usize
@@ -358,7 +360,8 @@ impl Room {
 
         if angle == 45. || angle == 135. {
             ensure!(
-                self.board[to].is_some() && ((magnitude * 100.).round() / 100.) == 1.41,
+                self.board[to].is_some_and(|(_, color, _, _)| moving_peice_color != color)
+                    && ((magnitude * 100.).round() / 100.) == 1.41,
                 "pawns can only move diaganoly when capturing a piece."
             );
         } else if angle == 90. {

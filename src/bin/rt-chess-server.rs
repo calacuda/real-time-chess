@@ -120,6 +120,8 @@ impl IndexMut<&Location> for Board {
 pub struct Room {
     id: RoomID,
     board: Board,
+    // TODO: add a Host and player2 field
+    // TODO: add a spectators field
 }
 
 impl Room {

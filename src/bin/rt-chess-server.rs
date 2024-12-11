@@ -1,25 +1,23 @@
 #![feature(let_chains)]
 use anyhow::{Result, ensure};
-use bevy::{
-    diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
-    prelude::*,
-};
-use bevy_egui::EguiPlugin;
-use bevy_renet::{
-    RenetServerPlugin,
-    renet::{ClientId, RenetServer, ServerEvent},
-};
+use async_trait::async_trait;
 use real_time_chess::{
-    ChessPiece, ClientChannel, ClientInGameMessage, ClientSystemMessage, File, Location,
-    PROTOCOL_ID, Player, PlayerColor, Rank, RoomID, ServerChannel, ServerInGameMessage,
-    ServerSystemMessage, Slope, connection_config,
+    ChessPiece, File, Location, Player, PlayerColor, Rank, RoomID, ServerInGameMessage, Slope,
 };
-use renet_visualizer::RenetServerVisualizer;
+use russh::{
+    Channel, ChannelId, CryptoVec, Preferred,
+    keys::Certificate,
+    server::{self, Msg, Server as _, Session},
+};
+use russh_keys::{PublicKey, ssh_key::rand_core::OsRng};
 use std::{
     collections::HashMap,
     ops::{Index, IndexMut},
+    sync::Arc,
     time::{Duration, Instant},
 };
+use tokio::sync::Mutex;
+use tracing::*;
 
 pub type BoardPiece = (ChessPiece, PlayerColor, Instant, Duration);
 pub type BoardSquare = Option<BoardPiece>;
@@ -116,7 +114,7 @@ impl IndexMut<&Location> for Board {
     }
 }
 
-#[derive(Debug, Default, Clone, Component)]
+#[derive(Debug, Default, Clone)]
 pub struct Room {
     id: RoomID,
     board: Board,
@@ -133,7 +131,7 @@ impl Room {
     ) -> ServerInGameMessage {
         let Some((piece, moving_peice_color, last_moved, cooldown)) = self.board[&from].clone()
         else {
-            error!("{}, tried to move a nonexisting peice.", player.id);
+            error!("{}, tried to move a nonexisting peice.", player.user_name);
             return ServerInGameMessage::InvalidMove(format!(
                 "there is no peice to move at possision {from:?}"
             ));
@@ -441,212 +439,135 @@ impl Room {
     }
 }
 
-#[derive(Debug, Default, Resource)]
-pub struct ServerLobby {
-    pub players: HashMap<ClientId, Player>,
-    pub room_mem: HashMap<ClientId, RoomID>,
+#[derive(Clone)]
+struct Server {
+    clients: Arc<Mutex<HashMap<usize, (ChannelId, russh::server::Handle)>>>,
+    id: usize,
 }
 
-fn add_network(app: &mut App) {
-    use bevy_renet::netcode::{
-        NetcodeServerPlugin, NetcodeServerTransport, ServerAuthentication, ServerConfig,
+impl Server {
+    async fn post(&mut self, data: CryptoVec) {
+        let mut clients = self.clients.lock().await;
+        for (id, &mut (ref mut channel, ref mut s)) in clients.iter_mut() {
+            if *id != self.id {
+                let _ = s.data(*channel, data.clone()).await;
+            }
+        }
+    }
+}
+
+impl server::Server for Server {
+    type Handler = Self;
+    fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Self {
+        let s = self.clone();
+        self.id += 1;
+        s
+    }
+    fn handle_session_error(&mut self, _error: <Self::Handler as russh::server::Handler>::Error) {
+        eprintln!("Session error: {:#?}", _error);
+    }
+}
+
+#[async_trait]
+impl server::Handler for Server {
+    type Error = russh::Error;
+
+    async fn channel_open_session(
+        &mut self,
+        channel: Channel<Msg>,
+        session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        {
+            let mut clients = self.clients.lock().await;
+            clients.insert(self.id, (channel.id(), session.handle()));
+        }
+        Ok(true)
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        _: &str,
+        _key: &PublicKey,
+    ) -> Result<server::Auth, Self::Error> {
+        Ok(server::Auth::Accept)
+    }
+
+    async fn auth_openssh_certificate(
+        &mut self,
+        _user: &str,
+        certificate: &Certificate,
+    ) -> Result<server::Auth, Self::Error> {
+        dbg!(certificate);
+        Ok(server::Auth::Accept)
+    }
+
+    async fn data(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        // Sending Ctrl+C ends the session and disconnects the client
+        if data == [3] {
+            return Err(russh::Error::Disconnect);
+        }
+
+        let data = CryptoVec::from(format!("Got data: {}\r\n", String::from_utf8_lossy(data)));
+        self.post(data.clone()).await;
+        session.data(channel, data)?;
+        Ok(())
+    }
+
+    // async fn tcpip_forward(
+    //     &mut self,
+    //     address: &str,
+    //     port: &mut u32,
+    //     session: &mut Session,
+    // ) -> Result<bool, Self::Error> {
+    //     let handle = session.handle();
+    //     let address = address.to_string();
+    //     let port = *port;
+    //     tokio::spawn(async move {
+    //         let channel = handle
+    //             .channel_open_forwarded_tcpip(address, port, "1.2.3.4", 1234)
+    //             .await
+    //             .unwrap();
+    //         let _ = channel.data(&b"Hello from a forwarded port"[..]).await;
+    //         let _ = channel.eof().await;
+    //     });
+    //     Ok(true)
+    // }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let id = self.id;
+        let clients = self.clients.clone();
+        tokio::spawn(async move {
+            let mut clients = clients.lock().await;
+            clients.remove(&id);
+        });
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let config = russh::server::Config {
+        inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+        auth_rejection_time: std::time::Duration::from_secs(3),
+        auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
+        keys: vec![
+            russh_keys::PrivateKey::random(&mut OsRng, russh_keys::Algorithm::Ed25519).unwrap(),
+        ],
+        preferred: Preferred::default(),
+        ..Default::default()
     };
-    // use demo_bevy:PROTOCOL_ID, connection_config};
-    use std::{net::UdpSocket, time::SystemTime};
-
-    app.add_plugins(NetcodeServerPlugin);
-
-    let server = RenetServer::new(connection_config());
-
-    let public_addr = "127.0.0.1:5000".parse().unwrap();
-    let socket = UdpSocket::bind(public_addr).unwrap();
-    let current_time: std::time::Duration = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
+    let config = Arc::new(config);
+    let mut sh = Server {
+        clients: Arc::new(Mutex::new(HashMap::new())),
+        id: 0,
+    };
+    sh.run_on_address(config, ("127.0.0.1", 2222))
+        .await
         .unwrap();
-    let server_config = ServerConfig {
-        current_time,
-        max_clients: 64,
-        protocol_id: PROTOCOL_ID,
-        public_addresses: vec![public_addr],
-        authentication: ServerAuthentication::Unsecure,
-    };
-
-    let transport = NetcodeServerTransport::new(server_config, socket).unwrap();
-    app.insert_resource(server);
-    app.insert_resource(transport);
-}
-
-fn main() {
-    let mut app = App::new();
-    app.add_plugins(DefaultPlugins);
-
-    app.add_plugins(RenetServerPlugin);
-    app.add_plugins(FrameTimeDiagnosticsPlugin);
-    app.add_plugins(LogDiagnosticsPlugin::default());
-    app.add_plugins(EguiPlugin);
-
-    app.insert_resource(ServerLobby::default());
-
-    app.insert_resource(RenetServerVisualizer::<200>::default());
-
-    add_network(&mut app);
-
-    app.add_systems(Update, server_update_system);
-
-    // app.add_systems(FixedUpdate, apply_velocity_system);
-    // app.add_systems(PostUpdate, projectile_on_removal_system);
-    // app.add_systems(Startup, (setup_level, setup_simple_camera));
-
-    app.run();
-}
-
-fn server_update_system(
-    mut server_events: EventReader<ServerEvent>,
-    mut commands: Commands,
-    mut lobby: ResMut<ServerLobby>,
-    mut rooms: Query<&mut Room>,
-    mut server: ResMut<RenetServer>,
-    mut visualizer: ResMut<RenetServerVisualizer<200>>,
-) {
-    for event in server_events.read() {
-        match event {
-            ServerEvent::ClientConnected { client_id } => {
-                info!("Player {} connected.", client_id);
-                visualizer.add_client(*client_id);
-
-                lobby.players.insert(*client_id, Player {
-                    id: *client_id,
-                    color: PlayerColor::White,
-                    cooldown: Duration::from_secs(5),
-                });
-            }
-            ServerEvent::ClientDisconnected { client_id, reason } => {
-                info!("Player {} disconnected: {}", client_id, reason);
-                visualizer.remove_client(*client_id);
-                if lobby.players.remove(client_id).is_some() {
-                    lobby.room_mem.remove(&client_id);
-                }
-            }
-        }
-    }
-
-    for client_id in server.clients_id() {
-        while let Some(message) = server.receive_message(client_id, ClientChannel::System) {
-            if let Ok(command) = bincode::deserialize::<ClientSystemMessage>(&message) {
-                match command {
-                    ClientSystemMessage::ListRooms => {
-                        let message = ServerSystemMessage::ListRooms(
-                            // lobby.rooms.clone().keys().map(|key| *key).collect(),
-                            rooms.iter().map(|room| room.id.clone()).collect(),
-                        );
-                        let message = bincode::serialize(&message).unwrap();
-                        server.send_message(client_id, ServerChannel::System, message);
-                    }
-                    // ClientMessage::ChatMessage(_mesg) => {}
-                    ClientSystemMessage::StartRoom(room_key) => {
-                        if lobby.players.get(&client_id).is_some()
-                            && !lobby.room_mem.contains_key(&client_id)
-                        {
-                            // lobby.rooms.insert(room_key, Room::default());
-                            if rooms.iter().position(|room| room.id == room_key).is_none() {
-                                commands.spawn(Room {
-                                    id: room_key,
-                                    board: Board::default(),
-                                });
-                                lobby.room_mem.insert(client_id, room_key);
-                                let msg = ServerSystemMessage::JoinedRoom(room_key);
-                                server.send_message(
-                                    client_id,
-                                    ServerChannel::System,
-                                    bincode::serialize(&msg).unwrap(),
-                                );
-                            } else {
-                                let msg = ServerSystemMessage::Error(
-                                    "that room key already exists. try a different one.".into(),
-                                );
-                                server.send_message(
-                                    client_id,
-                                    ServerChannel::System,
-                                    bincode::serialize(&msg).unwrap(),
-                                );
-                            }
-                        } else {
-                            let msg = ServerSystemMessage::Error("you are already in a room. please leave the room before trying to start a new one.".into());
-                            server.send_message(
-                                client_id,
-                                ServerChannel::System,
-                                bincode::serialize(&msg).unwrap(),
-                            );
-                        }
-                    }
-                    ClientSystemMessage::JoinRoom(room_key) => {
-                        // TODO: add room join requesting and the like.
-                        let room_exists =
-                            rooms.iter().position(|room| room.id == room_key).is_some();
-                        if room_exists && !lobby.room_mem.contains_key(&client_id) {
-                            lobby.room_mem.remove(&client_id);
-                            lobby.room_mem.insert(client_id, room_key);
-                        } else {
-                            let message = bincode::serialize(&if !room_exists {
-                                ServerSystemMessage::Error("that room doen't exist".into())
-                            } else if lobby.room_mem.contains_key(&client_id) {
-                                ServerSystemMessage::Error("you're already in a room".into())
-                            } else {
-                                ServerSystemMessage::Error("can't join that room right now.".into())
-                            });
-                            if let Ok(message) = message {
-                                server.send_message(client_id, ServerChannel::System, message);
-                            } else {
-                                error!("could not serialize JoinRoomFailure message.");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        while let Some(message) = server.receive_message(client_id, ClientChannel::Game) {
-            if let Ok(command) = bincode::deserialize::<ClientInGameMessage>(&message) {
-                match command {
-                    ClientInGameMessage::Move { from, to } => {
-                        let room_mem = lobby.room_mem.clone();
-                        let room = room_mem.get(&client_id);
-
-                        if let Some(room_id) = room {
-                            if let Some(ref mut player) = lobby.players.get_mut(&client_id) {
-                                rooms.iter_mut().for_each(|mut room| {
-                                    if room.id == room_id.clone() {
-                                        let message = bincode::serialize(
-                                            &room.make_move_for(player, from, to),
-                                        )
-                                        .unwrap();
-                                        server.send_message(
-                                            client_id,
-                                            ServerChannel::InGame,
-                                            message,
-                                        );
-
-                                        // TODO: check for victory.
-                                        // TODO: check for promotion.
-                                    }
-                                });
-                            } else {
-                                let message = bincode::serialize(&ServerSystemMessage::Error(
-                                    "that room has closed. the game ended.".into(),
-                                ))
-                                .unwrap();
-                                server.send_message(client_id, ServerChannel::System, message);
-                            }
-                        } else {
-                            let message = bincode::serialize(&ServerSystemMessage::Error(
-                                "you're not in a room. join/start on first".into(),
-                            ))
-                            .unwrap();
-                            server.send_message(client_id, ServerChannel::System, message);
-                        }
-                    }
-                }
-            }
-        }
-    }
 }

@@ -1,5 +1,3 @@
-use bevy::prelude::*;
-use bevy_renet::renet::{ChannelConfig, ClientId, ConnectionConfig, SendType};
 use serde::{Deserialize, Serialize};
 use std::{f32::consts::PI, time::Duration};
 
@@ -13,7 +11,7 @@ pub fn display_room_id(id: &RoomID) -> String {
     format!("{}-{}-{}-{}", id[0], id[1], id[2], id[3])
 }
 
-#[derive(Debug, Clone, Copy, Component, Serialize, Deserialize, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub struct Slope {
     pub rise: f32,
     pub run: f32,
@@ -31,9 +29,9 @@ impl Slope {
     }
 }
 
-#[derive(Debug, Clone, Copy, Component, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Player {
-    pub id: ClientId,
+    pub user_name: UserName,
     pub color: PlayerColor,
     pub cooldown: Duration,
 }
@@ -92,7 +90,7 @@ impl Into<usize> for Rank {
     }
 }
 
-#[derive(Debug, Clone, Copy, Component, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ChessPiece {
     K,
     Q,
@@ -116,7 +114,7 @@ pub enum ClientSystemMessage {
     ListRooms,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Resource)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PlayerColor {
     Black,
     White,
@@ -167,86 +165,4 @@ pub enum ServerSystemMessage {
     JoinedRoom(RoomID),
     /// notifies a client that they left a room.
     LeftRoom(RoomID),
-}
-
-pub enum ClientChannel {
-    Game,
-    System,
-}
-pub enum ServerChannel {
-    InGame,
-    InRoom,
-    System,
-}
-
-impl From<ClientChannel> for u8 {
-    fn from(channel_id: ClientChannel) -> Self {
-        match channel_id {
-            ClientChannel::System => 0,
-            ClientChannel::Game => 1,
-        }
-    }
-}
-
-impl ClientChannel {
-    pub fn channels_config() -> Vec<ChannelConfig> {
-        vec![
-            ChannelConfig {
-                channel_id: Self::System.into(),
-                max_memory_usage_bytes: 5 * 1024 * 1024,
-                send_type: SendType::ReliableOrdered {
-                    resend_time: Duration::ZERO,
-                },
-            },
-            ChannelConfig {
-                channel_id: Self::Game.into(),
-                max_memory_usage_bytes: 5 * 1024 * 1024,
-                send_type: SendType::ReliableOrdered {
-                    resend_time: Duration::ZERO,
-                },
-            },
-        ]
-    }
-}
-
-impl From<ServerChannel> for u8 {
-    fn from(channel_id: ServerChannel) -> Self {
-        match channel_id {
-            ServerChannel::System => 0,
-            ServerChannel::InGame => 1,
-            ServerChannel::InRoom => 2,
-        }
-    }
-}
-
-impl ServerChannel {
-    pub fn channels_config() -> Vec<ChannelConfig> {
-        vec![
-            ChannelConfig {
-                channel_id: Self::System.into(),
-                max_memory_usage_bytes: 10 * 1024 * 1024,
-                send_type: SendType::Unreliable,
-            },
-            ChannelConfig {
-                channel_id: Self::InGame.into(),
-                max_memory_usage_bytes: 10 * 1024 * 1024,
-                send_type: SendType::ReliableOrdered {
-                    resend_time: Duration::from_millis(200),
-                },
-            },
-            ChannelConfig {
-                channel_id: Self::InRoom.into(),
-                max_memory_usage_bytes: 10 * 1024 * 1024,
-                send_type: SendType::Unreliable,
-            },
-        ]
-    }
-}
-
-pub fn connection_config() -> ConnectionConfig {
-    ConnectionConfig {
-        available_bytes_per_tick: 1024 * 1024,
-        client_channels_config: ClientChannel::channels_config(),
-        server_channels_config: ServerChannel::channels_config(),
-    }
 }

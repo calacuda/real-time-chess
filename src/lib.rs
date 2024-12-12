@@ -3,6 +3,11 @@ use bevy_renet::renet::{ChannelConfig, ClientId, ConnectionConfig, SendType};
 use serde::{Deserialize, Serialize};
 use std::{f32::consts::PI, time::Duration};
 
+pub mod components;
+pub mod events;
+pub mod plugins;
+pub mod systems;
+
 pub const PROTOCOL_ID: u64 = 7;
 
 pub type Location = (Rank, File);

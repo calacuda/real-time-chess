@@ -21,6 +21,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod server;
+
 pub type BoardPiece = (ChessPiece, PlayerColor, Instant, Duration);
 pub type BoardSquare = Option<BoardPiece>;
 

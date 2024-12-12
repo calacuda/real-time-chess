@@ -14,3 +14,14 @@ tmux:
   @just new-window "Git" "git status"
   @just new-window "Misc" ""
   tmux a -t rt-chess
+
+new-c-system NAME:
+  touch src/bin/client/systems/{{NAME}}.rs
+  echo -e "use bevy::prelude::*;\n" >> src/bin/client/systems/{{NAME}}.rs
+  echo 'pub fn {{NAME}}() {}' >> src/bin/client/systems/{{NAME}}.rs
+  $EDITOR src/bin/client/systems/mod.rs src/bin/client/systems/{{NAME}}.rs
+
+new-s-system NAME:
+
+new-system NAME:
+

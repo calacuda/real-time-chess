@@ -10,7 +10,7 @@ use client::{
         opponent_capture::OpponentCaptureNotif, opponent_move::OpponentMoveNotif,
         player_capture::PlayerCaptureNotif, player_move::PlayerMoveNotif, room_change::RoomChange,
     },
-    plugins::setup_network_plugin::SetupNetwork,
+    plugins::{in_game::InGamePlugin, setup_network_plugin::SetupNetwork},
     states::game_state::GameState,
     systems::{
         Connected, enter_room_select::enter_select_room, get_room_list::get_rooms_list,
@@ -32,8 +32,8 @@ fn main() {
         .add_plugins(LogDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin)
         .add_plugins(SetupNetwork)
+        .add_plugins(InGamePlugin)
         .init_state::<GameState>()
-        // app.add_event::<PlayerCommand>()
         .add_event::<InvalidMoveNotif>()
         .add_event::<PlayerCaptureNotif>()
         .add_event::<OpponentCaptureNotif>()
@@ -42,7 +42,6 @@ fn main() {
         .add_event::<GameEnd>()
         .add_event::<NewError>()
         .add_event::<RoomChange>()
-        // app.add_systems(Update, (player_input, camera_follow, update_target_system));
         .add_systems(
             Update,
             (
@@ -55,19 +54,14 @@ fn main() {
                 handle_invalid_move_event,
                 handle_room_change_event,
                 update_visulizer_system,
+                enter_select_room.run_if(in_state(GameState::Startup)),
             )
                 .in_set(Connected),
         )
         .add_systems(OnEnter(GameState::RoomSelect), get_rooms_list)
-        .add_systems(
-            Update,
-            enter_select_room
-                .run_if(in_state(GameState::Startup))
-                .in_set(Connected),
-        )
         .insert_resource(RenetClientVisualizer::<200>::new(
             RenetVisualizerStyle::default(),
         ))
-        .add_systems(Startup, setup_camera)
+        .add_systems(OnEnter(GameState::InGame), setup_camera)
         .run();
 }

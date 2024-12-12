@@ -8,12 +8,30 @@ use bevy_renet::netcode::{
 };
 use bevy_renet::{RenetClientPlugin, client_connected, renet::RenetClient};
 use real_time_chess::{
-    Location, PROTOCOL_ID, PlayerColor, RoomID, ServerChannel, ServerInGameMessage,
-    ServerInRoomMessage, ServerSystemMessage, connection_config, display_room_id,
+    ClientChannel, ClientSystemMessage, Location, PROTOCOL_ID, PlayerColor, RoomID, ServerChannel,
+    ServerInGameMessage, ServerInRoomMessage, ServerSystemMessage, connection_config,
+    display_room_id,
 };
 use renet_visualizer::{RenetClientVisualizer, RenetVisualizerStyle};
 use std::time::{Duration, Instant};
 use std::{net::UdpSocket, time::SystemTime};
+
+#[derive(States, Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GameState {
+    InGame,
+    InRoom,
+    #[default]
+    Startup,
+    RoomSelect,
+    StartNewRoom,
+    Settings,
+}
+
+// #[derive(States, Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+// pub enum GameScreen {
+//     Login, // not yet planned
+//     RoomSelect, //
+// }
 
 #[derive(Debug, Resource)]
 pub struct CurrentClientId(pub u64);
@@ -144,110 +162,6 @@ fn update_visulizer_system(
         visualizer.show_window(egui_contexts.ctx_mut());
     }
 }
-
-// fn client_send_player_commands(
-//     mut player_commands: EventReader<PlayerCommand>,
-//     mut client: ResMut<RenetClient>,
-// ) {
-//     for command in player_commands.read() {
-//         let command_message = bincode::serialize(command).unwrap();
-//         client.send_message(ClientChannel::Command, command_message);
-//     }
-// }
-
-// fn recv_system_messages(
-//     mut commands: Commands,
-//     mut client: ResMut<RenetClient>,
-//     // client_id: Res<CurrentClientId>,
-//     player_color: Option<Res<PlayerColor>>,
-//     mut invalid_message_event: EventWriter<InvalidMoveNotif>,
-//     mut pl_capture_event: EventWriter<PlayerCaptureNotif>,
-//     mut op_capture_event: EventWriter<OpponentCaptureNotif>,
-//     mut player_move_event: EventWriter<PlayerMoveNotif>,
-//     mut opponent_move_event: EventWriter<OpponentMoveNotif>,
-//     mut game_over_event: EventWriter<GameOver>,
-//     mut error_event: EventWriter<ErrorNotif>,
-//     mut room_change_event: EventWriter<RoomChange>,
-// ) {
-//     // let client_id = client_id.0;
-//     while let Some(message) = client.receive_message(ServerChannel::System) {
-//         let server_message = bincode::deserialize(&message).unwrap();
-//         match server_message {
-//             ServerMessage::LoadingMatch(_dur) => {
-//                 todo!("match loading not yet implemented");
-//             }
-//             // ServerMessage::ChatMessage(message) => {
-//             //     info!("message recv => {message}")
-//             // }
-//             ServerMessage::InvalidMove(message) => {
-//                 if player_color.as_ref().is_none() {
-//                     continue;
-//                 }
-//
-//                 // TODO: use system message.
-//                 invalid_message_event.send(InvalidMoveNotif { message });
-//             }
-//             ServerMessage::ListRooms(room_ids) => {
-//                 for id in room_ids {
-//                     commands.spawn(RoomKey(id));
-//                 }
-//             }
-//             ServerMessage::MoveRecv {
-//                 player,
-//                 from,
-//                 to,
-//                 capture,
-//                 cooldown,
-//             } => {
-//                 if player_color.as_ref().is_none() {
-//                     continue;
-//                 }
-//
-//                 let my_move = player_color.as_ref().is_some_and(|color| **color == player);
-//
-//                 if capture && my_move {
-//                     pl_capture_event.send_default();
-//                 } else if capture && !my_move {
-//                     op_capture_event.send_default();
-//                 }
-//
-//                 if my_move {
-//                     player_move_event.send(PlayerMoveNotif { from, to, cooldown });
-//                 } else {
-//                     opponent_move_event.send(OpponentMoveNotif { from, to, cooldown });
-//                 }
-//             }
-//             ServerMessage::Victory(player) => {
-//                 if player_color.as_ref().is_none() {
-//                     continue;
-//                 }
-//
-//                 let my_vic = player_color.as_ref().is_some_and(|color| **color == player);
-//
-//                 if my_vic {
-//                     game_over_event.send(GameOver::Victory);
-//                 } else {
-//                     game_over_event.send(GameOver::Loss);
-//                 }
-//             }
-//             ServerMessage::Error(message) => {
-//                 error_event.send(ErrorNotif(message));
-//             }
-//             ServerMessage::Draw => {
-//                 game_over_event.send(GameOver::Draw);
-//             }
-//             ServerMessage::OpponentDisconect => {
-//                 game_over_event.send(GameOver::OpponentDisconnect);
-//             }
-//             ServerMessage::JoinedRoom(room_id) => {
-//                 room_change_event.send(RoomChange::Enter(room_id));
-//             }
-//             ServerMessage::LeftRoom(room_id) => {
-//                 room_change_event.send(RoomChange::Exit(room_id));
-//             }
-//         }
-//     }
-// }
 
 fn recv_system_messages(
     mut commands: Commands,
@@ -401,19 +315,46 @@ fn handle_room_change_event(
     mut sys_msg: ResMut<SystemMessages>,
 ) {
     for ev in invalid_event.read() {
+        let (message, msg_type) = match ev {
+            RoomChange::Enter(id) => (
+                format!("joined room: {}", display_room_id(id)),
+                SystemMessageType::RoomJoin,
+            ),
+            RoomChange::Exit(id) => (
+                format!("left room: {}", display_room_id(id)),
+                SystemMessageType::RoomLeave,
+            ),
+        };
+
         sys_msg.0.push(SystemMessage {
             display_duration: Duration::from_secs_f32(3.5),
-            message: match ev {
-                RoomChange::Enter(id) => format!("joined room: {}", display_room_id(id)),
-                RoomChange::Exit(id) => format!("left room: {}", display_room_id(id)),
-            },
-            msg_type: match ev {
-                RoomChange::Enter(_) => SystemMessageType::RoomJoin,
-                RoomChange::Exit(_) => SystemMessageType::RoomLeave,
-            },
+            message,
+            msg_type,
             shown: None,
         });
     }
+}
+
+fn get_rooms_list(mut client: ResMut<RenetClient>) {
+    client.send_message(
+        ClientChannel::System,
+        bincode::serialize(&ClientSystemMessage::ListRooms).unwrap(),
+    )
+}
+
+fn setup_camera(mut commands: Commands) {
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(0., 8.0, 2.5).looking_at(Vec3::new(0.0, 0.5, 0.0), Vec3::Y),
+    ));
+}
+
+fn select_room(mut next_state: ResMut<NextState<GameState>>) {
+    next_state.set(GameState::RoomSelect);
+}
+
+fn connected(mode: Res<RenetClient>) -> bool {
+    mode.is_connected()
 }
 
 fn main() {
@@ -425,6 +366,7 @@ fn main() {
     app.add_plugins(EguiPlugin);
 
     add_network(&mut app);
+    app.init_state::<GameState>();
 
     // app.add_event::<PlayerCommand>();
     app.add_event::<InvalidMoveNotif>();
@@ -456,12 +398,14 @@ fn main() {
         )
             .in_set(Connected),
     );
+    app.add_systems(OnEnter(GameState::RoomSelect), get_rooms_list);
+    app.add_systems(Update, select_room.run_if(connected));
 
     app.insert_resource(RenetClientVisualizer::<200>::new(
         RenetVisualizerStyle::default(),
     ));
 
-    // app.add_systems(Startup, (setup_level, setup_camera, setup_target));
+    app.add_systems(Startup, setup_camera);
     app.add_systems(Update, update_visulizer_system);
 
     app.run();

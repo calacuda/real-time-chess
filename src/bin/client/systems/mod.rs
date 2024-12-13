@@ -8,6 +8,7 @@ pub mod get_room_list;
 pub mod handle_error;
 pub mod handle_invalid_move;
 pub mod handle_room_change;
+pub mod load_game_assets;
 pub mod recv_in_game_messages;
 pub mod recv_in_room_messages;
 pub mod recv_system_messages;

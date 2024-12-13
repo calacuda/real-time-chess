@@ -54,6 +54,7 @@ pub fn load_game_assets(
 
                 info!("square at ({x}, {y}) is {:?}", material);
 
+                // TODO: figure out a way to uniquely identify every square.
                 commands.spawn((
                     square.clone(),
                     MeshMaterial3d(materials.add(material)),

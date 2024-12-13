@@ -1,5 +1,6 @@
 use bevy::{
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
+    log::LogPlugin,
     prelude::*,
 };
 use bevy_egui::EguiPlugin;
@@ -35,6 +36,15 @@ fn main() {
                         resizable: true,
                         ..default()
                     }),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    watch_for_changes_override: Some(true),
+                    ..Default::default()
+                })
+                .set(LogPlugin {
+                    // level: bevy::log::Level::DEBUG,
+                    // filter: "debug,wgpu_core=warn,wgpu_hal=warn".into(),
                     ..default()
                 })
                 .build(),
@@ -75,6 +85,5 @@ fn main() {
         .insert_resource(RenetClientVisualizer::<200>::new(
             RenetVisualizerStyle::default(),
         ))
-        .add_systems(OnEnter(GameState::InGame), setup_camera)
         .run();
 }

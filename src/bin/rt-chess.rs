@@ -26,7 +26,19 @@ pub mod client;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "rt-chess".into(),
+                        // resolution: (640.0, 480.0).into(),
+                        resizable: true,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .build(),
+        )
         .add_plugins(RenetClientPlugin)
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_plugins(LogDiagnosticsPlugin::default())

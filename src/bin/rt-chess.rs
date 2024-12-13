@@ -39,6 +39,7 @@ fn main() {
                 })
                 .build(),
         )
+        .insert_resource(ClearColor(Color::BLACK))
         .add_plugins(RenetClientPlugin)
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_plugins(LogDiagnosticsPlugin::default())
